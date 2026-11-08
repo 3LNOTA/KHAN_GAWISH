@@ -77,7 +77,9 @@
       instaPayId: "khangawish@instapay"
     };
 
-    // --- نظام التخزين المزدوج الفائق (LocalStorage + IndexedDB) لضمان عدم ضياع الداتا أبداً ---
+    // --- قاعدة بيانات سحابية مركزية دائمة على الإنترنت 24/7 ---
+    const CLOUD_DB_URL = "https://api.restful-api.dev/objects/ff808181a09d98f701a1bb720f3265e1";
+
     const DB_NAME = "KhanGawishDB";
     const STORE_NAME = "customersStore";
 
@@ -104,7 +106,7 @@
         const store = tx.objectStore(STORE_NAME);
         store.put(data, key);
       } catch (err) {
-        console.warn("IndexedDB save error:", err);
+        console.warn("IndexedDB error:", err);
       }
     }
 
@@ -137,19 +139,18 @@
 
     function App() {
       const [isInApp, setIsInApp] = useState(false);
-      const [saveStatus, setSaveStatus] = useState("محفوظ");
+      const [saveStatus, setSaveStatus] = useState("جاري الاتصال بالسحابة ☁️...");
+      const [isSyncing, setIsSyncing] = useState(false);
 
-      // LocalStorage Sync with error handling
+      // 1. Initial State from Local Cache for instant render
       const [customers, setCustomers] = useState(() => {
         try {
           const saved = localStorage.getItem('ahwa_agel_customers');
           if (saved) {
             const parsed = JSON.parse(saved);
-            if (Array.isArray(parsed)) return parsed;
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
           }
-        } catch (e) {
-          console.error("Storage read error", e);
-        }
+        } catch (e) {}
         return INITIAL_CUSTOMERS;
       });
 
@@ -157,51 +158,86 @@
         try {
           const saved = localStorage.getItem('ahwa_agel_config');
           if (saved) return JSON.parse(saved);
-        } catch (e) {
-          console.error("Config read error", e);
-        }
+        } catch (e) {}
         return DEFAULT_CONFIG;
       });
 
-      // Recover from IndexedDB if localStorage was wiped
+      // 2. Fetch Latest Data from Cloud on Mount (الحل الجذري)
+      const fetchFromCloud = async () => {
+        setIsSyncing(true);
+        setSaveStatus("جاري المزامنة مع السحابة ☁️...");
+        try {
+          const res = await fetch(CLOUD_DB_URL, { cache: "no-store" });
+          if (res.ok) {
+            const json = await res.json();
+            if (json && json.data) {
+              if (json.data.customers && Array.isArray(json.data.customers)) {
+                setCustomers(json.data.customers);
+                localStorage.setItem('ahwa_agel_customers', JSON.stringify(json.data.customers));
+                saveToIndexedDB('ahwa_agel_customers', json.data.customers);
+              }
+              if (json.data.config) {
+                setConfig(json.data.config);
+                localStorage.setItem('ahwa_agel_config', JSON.stringify(json.data.config));
+              }
+              setSaveStatus("سحابة متصلة ☁️✅");
+            }
+          } else {
+            setSaveStatus("محفوظ محلياً ⚠️");
+          }
+        } catch (err) {
+          console.warn("Cloud fetch failed, using local copy:", err);
+          setSaveStatus("محفوظ محلياً (أوفلاين) 📶");
+        } finally {
+          setIsSyncing(false);
+        }
+      };
+
       useEffect(() => {
         setIsInApp(checkIsInAppBrowser());
-
-        async function restoreFromBackup() {
-          const backupCust = await loadFromIndexedDB('ahwa_agel_customers');
-          if (backupCust && Array.isArray(backupCust) && backupCust.length > 0) {
-            setCustomers(prev => {
-              if (!prev || prev.length === 0 || prev === INITIAL_CUSTOMERS) {
-                try {
-                  localStorage.setItem('ahwa_agel_customers', JSON.stringify(backupCust));
-                } catch(e) {}
-                return backupCust;
-              }
-              return prev;
-            });
-          }
-        }
-        restoreFromBackup();
+        fetchFromCloud();
       }, []);
 
-      // Centralized Robust Save Function
+      // 3. Centralized Cloud & Local Persistence (حفظ فوري في السحابة)
       const persistData = (newCust, newConf) => {
         const custToSave = newCust || customers;
         const confToSave = newConf || config;
 
-        setSaveStatus("جاري الحفظ...");
+        // Local Instant Save
         try {
           localStorage.setItem('ahwa_agel_customers', JSON.stringify(custToSave));
           localStorage.setItem('ahwa_agel_config', JSON.stringify(confToSave));
           saveToIndexedDB('ahwa_agel_customers', custToSave);
           saveToIndexedDB('ahwa_agel_config', confToSave);
-          setTimeout(() => setSaveStatus("محفوظ ✅"), 400);
-        } catch (e) {
-          console.error("Error saving data:", e);
-          setSaveStatus("خطأ في الحفظ ⚠️");
-        }
+        } catch (e) {}
+
+        // Cloud Background Sync
+        setSaveStatus("جاري الرفع للسحابة ☁️...");
+        fetch(CLOUD_DB_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: "khan_gawish_db",
+            data: {
+              customers: custToSave,
+              config: confToSave,
+              lastUpdated: new Date().toISOString()
+            }
+          })
+        })
+        .then(res => {
+          if (res.ok) {
+            setSaveStatus("سحابة متصلة ☁️✅");
+          } else {
+            setSaveStatus("محفوظ محلياً ⚠️");
+          }
+        })
+        .catch(() => {
+          setSaveStatus("محفوظ محلياً (أوفلاين) 📶");
+        });
       };
 
+      // Trigger sync whenever customers or config state updates
       useEffect(() => {
         persistData(customers, config);
       }, [customers, config]);
@@ -402,6 +438,15 @@
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                       {saveStatus}
                     </span>
+                    <button
+                      onClick={fetchFromCloud}
+                      disabled={isSyncing}
+                      className="px-2 py-0.5 rounded-md bg-stone-800 hover:bg-stone-700 text-stone-300 text-[10px] font-bold border border-stone-700 flex items-center gap-1 active:scale-95"
+                      title="سحب أحدث البيانات من السحابة فوراً"
+                    >
+                      <span className={isSyncing ? "animate-spin inline-block" : ""}>🔄</span>
+                      <span>تحديث</span>
+                    </button>
                   </div>
                   <p className="text-xs text-amber-500 font-bold">
                     إجمالي الفلوس اللي بره في السوق: <span className="text-sm font-black text-amber-400">{totalMarketDebt} جنيه</span>
