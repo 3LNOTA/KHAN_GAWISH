@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>نوتة الشكك والآجل - القهوة البلدي</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Google Fonts: Cairo -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel Standalone -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Confetti -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+
+  <style>
+    body {
+      font-family: 'Cairo', sans-serif;
+      user-select: none;
+    }
+    input, textarea, select {
+      user-select: text;
+    }
+  </style>
+</head>
+<body class="bg-stone-950 text-stone-100 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    const INITIAL_CUSTOMERS = [
+      {
+        id: 'c1',
+        name: 'أبو أحمد (ورشة السمكرة)',
+        phone: '01099887766',
+        totalDebt: 320,
+        history: [
+          { id: 'h1', date: '2026-11-07 14:20', type: 'debt', items: '2 شاي كشري + 1 حجر قص', amount: 45 },
+          { id: 'h2', date: '2026-11-08 10:15', type: 'debt', items: '1 قهوة تركي محوج + كانز بيبسي', amount: 45 },
+        ]
+      },
+      {
+        id: 'c2',
+        name: 'كابتن وليد (الجيم)',
+        phone: '01122334455',
+        totalDebt: 180,
+        history: [
+          { id: 'h3', date: '2026-11-07 20:00', type: 'debt', items: '1 ليمون نعناع + مياه معدنية', amount: 35 },
+          { id: 'h4', date: '2026-11-08 12:30', type: 'debt', items: '1 سحلب مكسرات + حجر سلوم', amount: 50 },
+        ]
+      },
+      {
+        id: 'c3',
+        name: 'عم إبراهيم الترزي',
+        phone: '01234567890',
+        totalDebt: 75,
+        history: [
+          { id: 'h5', date: '2026-11-08 11:00', type: 'debt', items: '3 شاي كشري خفيف مع صحابه', amount: 30 }
+        ]
+      }
+    ];
+
+    const DEFAULT_CONFIG = {
+      cafeName: "قهوة المعلم",
+      vodafoneCash: "01012345678",
+      instaPayId: "elmoallem@instapay"
+    };
+
+    function App() {
+      // LocalStorage Sync
+      const [customers, setCustomers] = useState(() => {
+        const saved = localStorage.getItem('ahwa_agel_customers');
+        return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
+      });
+
+      const [config, setConfig] = useState(() => {
+        const saved = localStorage.getItem('ahwa_agel_config');
+        return saved ? JSON.parse(saved) : DEFAULT_CONFIG;
+      });
+
+      useEffect(() => {
+        localStorage.setItem('ahwa_agel_customers', JSON.stringify(customers));
+      }, [customers]);
+
+      useEffect(() => {
+        localStorage.setItem('ahwa_agel_config', JSON.stringify(config));
+      }, [config]);
+
+      // State for New Debt Entry (تسجيل شكك جديد)
+      const [selectedCustomerId, setSelectedCustomerId] = useState('');
+      const [amount, setAmount] = useState('');
+      const [drinksNote, setDrinksNote] = useState(''); // إجباري
+      const [searchQuery, setSearchQuery] = useState('');
+
+      // Modals
+      const [showNewCustomerModal, setShowNewCustomerModal] = useState(false);
+      const [newCustName, setNewCustName] = useState('');
+      const [newCustPhone, setNewCustPhone] = useState('');
+
+      const [activeCustomerDetail, setActiveCustomerDetail] = useState(null);
+      const [showPaymentModal, setShowPaymentModal] = useState(false);
+      const [payAmount, setPayAmount] = useState('');
+      const [payMethod, setPayMethod] = useState('كاش');
+
+      const [lastSavedEntry, setLastSavedEntry] = useState(null);
+      const [activeTab, setActiveTab] = useState('entry'); // entry, ledger, settings
+
+      // Calculations
+      const totalMarketDebt = useMemo(() => {
+        return customers.reduce((sum, c) => sum + (c.totalDebt || 0), 0);
+      }, [customers]);
+
+      const selectedCustomer = useMemo(() => {
+        return customers.find(c => c.id === selectedCustomerId) || null;
+      }, [customers, selectedCustomerId]);
+
+      const filteredCustomers = useMemo(() => {
+        if (!searchQuery.trim()) return customers;
+        return customers.filter(c => 
+          c.name.includes(searchQuery) || (c.phone && c.phone.includes(searchQuery))
+        );
+      }, [customers, searchQuery]);
+
+      // Clean Egyptian phone and format WhatsApp URL
+      const getWhatsAppLink = (phone, text) => {
+        let clean = (phone || '').replace(/\D/g, '');
+        if (clean.startsWith('0')) clean = '2' + clean;
+        return `https://wa.me/${clean}?text=${encodeURIComponent(text)}`;
+      };
+
+      // Form validation & submission
+      const handleSubmitDebt = (e) => {
+        e.preventDefault();
+
+        if (!selectedCustomerId) {
+          alert('⚠️ من فضلك اختر الزبون أولاً (مثلاً: أبو أحمد)');
+          return;
+        }
+
+        const parsedAmount = parseFloat(amount);
+        if (!parsedAmount || parsedAmount <= 0) {
+          alert('⚠️ اكتب المبلغ بالجنيه بشكل صحيح');
+          return;
+        }
+
+        if (!drinksNote.trim()) {
+          alert('⚠️ خانة المشاريب إجبارية! اكتب الزبون شرب إيه (مثال: 2 شاي وواحد قص)');
+          return;
+        }
+
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('ar-EG', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        const newDebtRecord = {
+          id: 'h_' + Date.now(),
+          date: dateStr,
+          type: 'debt',
+          items: drinksNote.trim(),
+          amount: parsedAmount
+        };
+
+        const targetCust = customers.find(c => c.id === selectedCustomerId);
+        const newTotalDebt = (targetCust.totalDebt || 0) + parsedAmount;
+
+        setCustomers(prev => prev.map(c => {
+          if (c.id === selectedCustomerId) {
+            return {
+              ...c,
+              totalDebt: newTotalDebt,
+              history: [newDebtRecord, ...c.history]
+            };
+          }
+          return c;
+        }));
+
+        if (window.confetti) {
+          confetti({ particleCount: 40, spread: 60, origin: { y: 0.7 } });
+        }
+
+        // WhatsApp message ready
+        const waText = `يا أستاذ ${targetCust.name}، منورنا دايماً في ${config.cafeName} ☕\nتم تسجيل حساب آجل جديد عليك:\n📋 المشاريب: *${drinksNote.trim()}*\n💵 المبلغ: *${parsedAmount} جنيه*\n📊 إجمالي حسابك في النوتة حتى الآن: *${newTotalDebt} جنيه*.\nتسلم إيدك وألف هنا وشفا!`;
+
+        setLastSavedEntry({
+          customer: targetCust,
+          amount: parsedAmount,
+          items: drinksNote.trim(),
+          newTotalDebt: newTotalDebt,
+          waLink: getWhatsAppLink(targetCust.phone, waText)
+        });
+
+        // Reset inputs
+        setAmount('');
+        setDrinksNote('');
+      };
+
+      // Handle Adding New Customer
+      const handleCreateCustomer = (e) => {
+        e.preventDefault();
+        if (!newCustName.trim()) {
+          alert('اكتب اسم الزبون');
+          return;
+        }
+
+        const newC = {
+          id: 'c_' + Date.now(),
+          name: newCustName.trim(),
+          phone: newCustPhone.trim(),
+          totalDebt: 0,
+          history: []
+        };
+
+        setCustomers(prev => [newC, ...prev]);
+        setSelectedCustomerId(newC.id);
+        setShowNewCustomerModal(false);
+        setNewCustName('');
+        setNewCustPhone('');
+      };
+
+      // Handle Payment
+      const handleRecordPayment = () => {
+        const amt = parseFloat(payAmount);
+        if (!amt || amt <= 0) {
+          alert('اكتب مبلغ سداد صحيح');
+          return;
+        }
+
+        const target = activeCustomerDetail;
+        const newDebt = Math.max(0, target.totalDebt - amt);
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('ar-EG', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        const payRecord = {
+          id: 'p_' + Date.now(),
+          date: dateStr,
+          type: 'payment',
+          items: `سداد دفعة (${payMethod})`,
+          amount: amt
+        };
+
+        const updated = {
+          ...target,
+          totalDebt: newDebt,
+          history: [payRecord, ...target.history]
+        };
+
+        setCustomers(prev => prev.map(c => c.id === target.id ? updated : c));
+        setActiveCustomerDetail(updated);
+        setShowPaymentModal(false);
+        setPayAmount('');
+
+        // Confirm send payment receipt via WhatsApp
+        const text = `يا أستاذ ${target.name} الغالي ☕\nتم استلام دفعة سداد بقيمة *${amt} جنيه* (${payMethod}).\nالمتبقي في نوتتك الآن: *${newDebt} جنيه*.\nشكراً لذوقك وربنا يوسع رزقك!`;
+        if (confirm('تم تسجيل السداد بنجاح! هل تريد إرسال تأكيد السداد للزبون على الواتساب؟')) {
+          window.open(getWhatsAppLink(target.phone, text), '_blank');
+        }
+      };
+
+      return (
+        <div className="flex flex-col min-h-screen">
+          {/* Header */}
+          <header className="bg-stone-900 border-b border-stone-800 sticky top-0 z-30 shadow-md">
+            <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl p-2 bg-amber-500/10 rounded-2xl border border-amber-500/20">☕</span>
+                <div>
+                  <h1 className="text-lg font-black text-amber-200">
+                    نوتة الشكك والآجل
+                    <span className="text-xs mr-2 font-normal text-stone-400">({config.cafeName})</span>
+                  </h1>
+                  <p className="text-xs text-amber-500 font-bold">
+                    إجمالي الفلوس اللي بره في السوق: <span className="text-sm font-black text-amber-400">{totalMarketDebt} جنيه</span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Navigation */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setActiveTab('entry')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    activeTab === 'entry'
+                      ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/30'
+                      : 'text-stone-300 bg-stone-800 hover:bg-stone-700'
+                  }`}
+                >
+                  📝 تسجيل آجل
+                </button>
+                <button
+                  onClick={() => setActiveTab('ledger')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    activeTab === 'ledger'
+                      ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/30'
+                      : 'text-stone-300 bg-stone-800 hover:bg-stone-700'
+                  }`}
+                >
+                  👥 دفتر الزباين ({customers.length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('settings')}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    activeTab === 'settings'
+                      ? 'bg-amber-600 text-white'
+                      : 'text-stone-400 bg-stone-800/60 hover:bg-stone-700'
+                  }`}
+                  title="إعدادات القهوة"
+                >
+                  ⚙️
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* Main Area */}
+          <main className="max-w-3xl w-full mx-auto p-4 flex-1">
+            
+            {/* TAB 1: تسجيل آجل جديد (التركيز الأساسي والمطلوب) */}
+            {activeTab === 'entry' && (
+              <div className="space-y-4">
+                
+                {/* البطاقة الرئيسية للتسجيل */}
+                <form onSubmit={handleSubmitDebt} className="bg-stone-900 border border-stone-800 rounded-3xl p-5 sm:p-7 shadow-2xl relative">
+                  <div className="flex items-center justify-between pb-3 border-b border-stone-800 mb-5">
+                    <div>
+                      <h2 className="text-base font-black text-stone-100 flex items-center gap-2">
+                        <span>✍️</span> تسجيل حساب شكك جديد
+                      </h2>
+                      <p className="text-xs text-stone-400 mt-0.5">اختر الزبون واكتب المبلغ والمشاريب المسجلة عليه</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewCustomerModal(true)}
+                      className="px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold hover:bg-amber-500/30 transition-all flex items-center gap-1"
+                    >
+                      <span>+</span> زبون جديد
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* 1. اختيار الزبون */}
+                    <div>
+                      <label className="block text-xs font-bold text-stone-300 mb-1.5">
+                        1. الزبون (صاحب النوتة) *
+                      </label>
+                      <select
+                        value={selectedCustomerId}
+                        onChange={(e) => setSelectedCustomerId(e.target.value)}
+                        required
+                        className="w-full bg-stone-950 border border-stone-700 rounded-2xl px-4 py-3 text-sm font-bold text-stone-100 focus:outline-none focus:border-amber-500 transition-all cursor-pointer"
+                      >
+                        <option value="">-- اضغط هنا لاختيار الزبون (مثال: أبو أحمد) --</option>
+                        {customers.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} {c.phone ? `(${c.phone})` : ''} — حسابه الحالي: {c.totalDebt} جنيه
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* تنبيه بالرصيد الحالي للزبون */}
+                    {selectedCustomer && (
+                      <div className="bg-amber-950/30 border border-amber-800/40 p-3 rounded-2xl flex items-center justify-between text-xs">
+                        <span className="text-stone-300">
+                          حساب <strong>{selectedCustomer.name}</strong> في النوتة قبل هذا الطلب:
+                        </span>
+                        <span className="text-sm font-black text-amber-400">
+                          {selectedCustomer.totalDebt} جنيه
+                        </span>
+                      </div>
+                    )}
+
+                    {/* 2. المبلغ */}
+                    <div>
+                      <label className="block text-xs font-bold text-stone-300 mb-1.5">
+                        2. المبلغ الإجمالي المطلوب (جنيه) *
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          step="any"
+                          required
+                          placeholder="اكتب المبلغ.. مثلاً: 45"
+                          value={amount}
+                          onChange={(e) => setAmount(e.target.value)}
+                          className="w-full bg-stone-950 border border-stone-700 rounded-2xl px-4 py-3 text-lg font-black text-amber-400 placeholder-stone-600 focus:outline-none focus:border-amber-500 transition-all"
+                        />
+                        <span className="absolute left-4 top-3.5 text-xs text-stone-400 font-bold">جنيه مصري</span>
+                      </div>
+                    </div>
+
+                    {/* 3. قائمة الملاحظات الإجبارية (المشاريب) */}
+                    <div>
+                      <label className="block text-xs font-bold text-stone-300 mb-1.5 flex items-center justify-between">
+                        <span>3. بيان المشاريب اللي خدها (ملاحظات إجبارية) *</span>
+                        <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">إجباري</span>
+                      </label>
+                      <textarea
+                        required
+                        rows="3"
+                        placeholder="اكتب بالتفصيل إيه المشاريب اللي اتسجلت.. مثلاً:&#10;2 شاي كشري + 1 حجر قص + مياه معدنية صغيرة مع أصحابه على طاولة 2"
+                        value={drinksNote}
+                        onChange={(e) => setDrinksNote(e.target.value)}
+                        className="w-full bg-stone-950 border border-stone-700 rounded-2xl p-4 text-xs font-medium text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500 transition-all"
+                      ></textarea>
+                    </div>
+
+                    {/* الزر الرئيسي للتسجيل */}
+                    <button
+                      type="submit"
+                      className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white font-black text-sm shadow-xl shadow-amber-900/40 border border-amber-400/40 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                    >
+                      <span>📝 احفظ في النوتة وجّهز رسالة الواتساب 📲</span>
+                    </button>
+                  </div>
+                </form>
+
+                {/* كارت نتيجة التسجيل الفوري + زر إرسال واتساب مباشرة */}
+                {lastSavedEntry && (
+                  <div className="bg-emerald-950/40 border border-emerald-700/60 rounded-3xl p-5 shadow-xl animate-in fade-in">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">✅</span>
+                        <h3 className="text-sm font-black text-emerald-200">
+                          تم تسجيل {lastSavedEntry.amount} جنيه على حساب {lastSavedEntry.customer.name}!
+                        </h3>
+                      </div>
+                      <span className="text-xs bg-emerald-900/60 text-emerald-300 px-2 py-0.5 rounded-full font-bold">
+                        الحساب الكلي الآن: {lastSavedEntry.newTotalDebt} ج
+                      </span>
+                    </div>
+
+                    <div className="bg-stone-950/80 rounded-2xl p-3 text-xs text-stone-300 mb-4 border border-emerald-900/40 space-y-1">
+                      <div>📋 <strong>المشاريب المسجلة:</strong> {lastSavedEntry.items}</div>
+                      <div>📱 <strong>رقم الزبون:</strong> {lastSavedEntry.customer.phone || 'غير مسجل رقم'}</div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <a
+                        href={lastSavedEntry.waLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 py-3 px-4 rounded-xl bg-green-600 hover:bg-green-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-green-950 transition-all"
+                      >
+                        <span>📲 إرسال رسالة الواتساب للزبون فوراً</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setLastSavedEntry(null)}
+                        className="px-4 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold"
+                      >
+                        تم / إخفاء
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            )}
+
+            {/* TAB 2: دفتر الزباين والنوتة (Ledger) */}
+            {activeTab === 'ledger' && (
+              <div className="space-y-4">
+                
+                {/* البحث وإضافة زبون */}
+                <div className="bg-stone-900 border border-stone-800 p-4 rounded-2xl flex flex-col sm:flex-row gap-3 items-center justify-between">
+                  <div className="relative w-full sm:w-72">
+                    <input
+                      type="text"
+                      placeholder="ابحث باسم الزبون أو رقمه..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 pr-8 text-xs text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500"
+                    />
+                    <span className="absolute right-2.5 top-2.5 text-stone-500 text-xs">🔍</span>
+                  </div>
+
+                  <button
+                    onClick={() => setShowNewCustomerModal(true)}
+                    className="w-full sm:w-auto px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center justify-center gap-1.5"
+                  >
+                    <span>+</span> زبون جديد
+                  </button>
+                </div>
+
+                {/* قائمة كروت الزباين */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {filteredCustomers.map(customer => (
+                    <div
+                      key={customer.id}
+                      className="bg-stone-900 border border-stone-800 rounded-2xl p-4 flex flex-col justify-between hover:border-amber-500/50 transition-all shadow-md"
+                    >
+                      <div>
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div>
+                            <h3 className="font-bold text-stone-100 text-sm">{customer.name}</h3>
+                            <p className="text-xs text-stone-400 font-mono">{customer.phone || 'بدون تليفون'}</p>
+                          </div>
+                          <div className="text-left">
+                            <span className="text-[10px] text-stone-400 block">إجمالي الآجل</span>
+                            <span className="text-base font-black text-amber-400">{customer.totalDebt} ج</span>
+                          </div>
+                        </div>
+
+                        {/* آخر حركة */}
+                        {customer.history && customer.history.length > 0 && (
+                          <div className="bg-stone-950/60 p-2.5 rounded-xl border border-stone-800/80 text-[11px] text-stone-300 my-2">
+                            <div className="text-stone-500 text-[10px]">آخر طلبية:</div>
+                            <div className="line-clamp-1 font-semibold">{customer.history[0].items}</div>
+                            <div className="text-stone-400 text-[10px] mt-0.5">{customer.history[0].date}</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* أزرار الإجراءات */}
+                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-stone-800/80 mt-2">
+                        <button
+                          onClick={() => {
+                            setSelectedCustomerId(customer.id);
+                            setActiveTab('entry');
+                          }}
+                          className="py-1.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 text-xs font-bold text-center"
+                        >
+                          + آجل
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setActiveCustomerDetail(customer);
+                            setShowPaymentModal(true);
+                          }}
+                          className="py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 text-xs font-bold text-center"
+                        >
+                          💵 سداد
+                        </button>
+
+                        <button
+                          onClick={() => setActiveCustomerDetail(customer)}
+                          className="py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold text-center"
+                        >
+                          📋 الكشف
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+              </div>
+            )}
+
+            {/* TAB 3: الإعدادات البسيطة */}
+            {activeTab === 'settings' && (
+              <div className="bg-stone-900 border border-stone-800 rounded-3xl p-5 shadow-xl max-w-lg mx-auto space-y-4">
+                <h3 className="font-bold text-stone-100 text-sm pb-2 border-b border-stone-800">بيانات القهوة</h3>
+                
+                <div>
+                  <label className="block text-xs font-bold text-stone-400 mb-1">اسم القهوة</label>
+                  <input
+                    type="text"
+                    value={config.cafeName}
+                    onChange={(e) => setConfig({ ...config, cafeName: e.target.value })}
+                    className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-stone-100"
+                  />
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    onClick={() => {
+                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(customers, null, 2));
+                      const a = document.createElement('a');
+                      a.href = dataStr;
+                      a.download = `notet-ahwa-${new Date().toISOString().split('T')[0]}.json`;
+                      a.click();
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold"
+                  >
+                    💾 تصدير وحفظ نسخة احتياطية من الدفتر
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </main>
+
+          {/* MODAL: إضافة زبون جديد */}
+          {showNewCustomerModal && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <form onSubmit={handleCreateCustomer} className="bg-stone-900 border border-stone-800 rounded-3xl max-w-sm w-full p-5 shadow-2xl">
+                <h3 className="text-sm font-black text-stone-100 mb-3">إضافة زبون جديد للنوتة</h3>
+                
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-400 mb-1">اسم الزبون *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="مثال: أبو أحمد، كابتن محمود..."
+                      value={newCustName}
+                      onChange={(e) => setNewCustName(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-stone-100 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-stone-400 mb-1">رقم الموبايل (عشان رسائل الواتساب)</label>
+                    <input
+                      type="tel"
+                      placeholder="01xxxxxxxxx"
+                      value={newCustPhone}
+                      onChange={(e) => setNewCustPhone(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-stone-100 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mt-5">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewCustomerModal(false)}
+                    className="py-2 rounded-xl bg-stone-800 text-stone-300 font-bold text-xs"
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="submit"
+                    className="py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs"
+                  >
+                    حفظ الزبون
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* MODAL: كشف حساب زبون تفصيلي */}
+          {activeCustomerDetail && !showPaymentModal && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-stone-900 border border-stone-800 rounded-3xl max-w-md w-full p-5 shadow-2xl flex flex-col max-h-[85vh]">
+                <div className="flex items-center justify-between pb-3 border-b border-stone-800">
+                  <div>
+                    <h3 className="font-bold text-stone-100 text-sm">كشف حساب: {activeCustomerDetail.name}</h3>
+                    <p className="text-xs text-amber-400 font-bold">إجمالي الآجل: {activeCustomerDetail.totalDebt} جنيه</p>
+                  </div>
+                  <button
+                    onClick={() => setActiveCustomerDetail(null)}
+                    className="w-7 h-7 rounded-full bg-stone-800 text-stone-300 text-xs flex items-center justify-center"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-2 my-3 pr-1">
+                  {activeCustomerDetail.history && activeCustomerDetail.history.length > 0 ? (
+                    activeCustomerDetail.history.map(item => (
+                      <div
+                        key={item.id}
+                        className={`p-3 rounded-xl border text-xs flex justify-between items-center ${
+                          item.type === 'payment'
+                            ? 'bg-emerald-950/20 border-emerald-800/40 text-emerald-200'
+                            : 'bg-stone-950 border-stone-800 text-stone-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-bold">{item.items}</div>
+                          <div className="text-[10px] text-stone-500">{item.date}</div>
+                        </div>
+                        <div className={`font-black text-sm ${item.type === 'payment' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                          {item.type === 'payment' ? `-${item.amount}` : `+${item.amount}`} ج
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 text-stone-500 text-xs">لا توجد حركات سابقة</div>
+                  )}
+                </div>
+
+                <div className="pt-3 border-t border-stone-800 flex gap-2">
+                  <button
+                    onClick={() => setShowPaymentModal(true)}
+                    className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
+                  >
+                    تسجيل سداد دفعة 💵
+                  </button>
+                  <button
+                    onClick={() => {
+                      const text = `يا أستاذ ${activeCustomerDetail.name}، منورنا دايماً ☕\nحساب النوتة الحالي هو *${activeCustomerDetail.totalDebt} جنيه*.\nتسلم يا غالي وصباحك سكر!`;
+                      window.open(getWhatsAppLink(activeCustomerDetail.phone, text), '_blank');
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-green-600 hover:bg-green-500 text-white font-bold text-xs"
+                  >
+                    واتساب 💬
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: تسجيل سداد */}
+          {showPaymentModal && activeCustomerDetail && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-stone-900 border border-stone-800 rounded-3xl max-w-xs w-full p-5 shadow-2xl">
+                <h3 className="text-sm font-bold text-stone-100 mb-1">تسجيل سداد دفعة</h3>
+                <p className="text-xs text-stone-400 mb-3">للزبون: <strong className="text-amber-300">{activeCustomerDetail.name}</strong></p>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-400 mb-1">المبلغ المسدد (جنيه)</label>
+                    <input
+                      type="number"
+                      placeholder="المبلغ.."
+                      value={payAmount}
+                      onChange={(e) => setPayAmount(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-sm font-bold text-emerald-400 focus:outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setPayAmount(activeCustomerDetail.totalDebt)}
+                      className="text-[10px] text-stone-400 hover:text-amber-300 mt-1 block"
+                    >
+                      سداد الحساب كله ({activeCustomerDetail.totalDebt} ج)
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-stone-400 mb-1">طريقة السداد</label>
+                    <select
+                      value={payMethod}
+                      onChange={(e) => setPayMethod(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-1.5 text-xs text-stone-200"
+                    >
+                      <option value="كاش">كاش</option>
+                      <option value="فودافون كاش">فودافون كاش</option>
+                      <option value="إنستاباي InstaPay">إنستاباي InstaPay</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowPaymentModal(false)}
+                    className="py-2 rounded-xl bg-stone-800 text-stone-300 text-xs font-bold"
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRecordPayment}
+                    className="py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
+                  >
+                    تأكيد السداد ✅
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
