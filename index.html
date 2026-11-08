@@ -77,25 +77,134 @@
       instaPayId: "khangawish@instapay"
     };
 
+    // --- نظام التخزين المزدوج الفائق (LocalStorage + IndexedDB) لضمان عدم ضياع الداتا أبداً ---
+    const DB_NAME = "KhanGawishDB";
+    const STORE_NAME = "customersStore";
+
+    function openIndexedDB() {
+      return new Promise((resolve) => {
+        if (!window.indexedDB) return resolve(null);
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      });
+    }
+
+    async function saveToIndexedDB(key, data) {
+      try {
+        const db = await openIndexedDB();
+        if (!db) return;
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        store.put(data, key);
+      } catch (err) {
+        console.warn("IndexedDB save error:", err);
+      }
+    }
+
+    async function loadFromIndexedDB(key) {
+      try {
+        const db = await openIndexedDB();
+        if (!db) return null;
+        return new Promise((resolve) => {
+          const tx = db.transaction(STORE_NAME, "readonly");
+          const store = tx.objectStore(STORE_NAME);
+          const req = store.get(key);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        });
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function checkIsInAppBrowser() {
+      const ua = navigator.userAgent || navigator.vendor || window.opera || '';
+      return (
+        ua.includes("WhatsApp") ||
+        ua.includes("FBAN") ||
+        ua.includes("FBAV") ||
+        ua.includes("Instagram") ||
+        ua.includes("wv")
+      );
+    }
+
     function App() {
-      // LocalStorage Sync
+      const [isInApp, setIsInApp] = useState(false);
+      const [saveStatus, setSaveStatus] = useState("محفوظ");
+
+      // LocalStorage Sync with error handling
       const [customers, setCustomers] = useState(() => {
-        const saved = localStorage.getItem('ahwa_agel_customers');
-        return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
+        try {
+          const saved = localStorage.getItem('ahwa_agel_customers');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed)) return parsed;
+          }
+        } catch (e) {
+          console.error("Storage read error", e);
+        }
+        return INITIAL_CUSTOMERS;
       });
 
       const [config, setConfig] = useState(() => {
-        const saved = localStorage.getItem('ahwa_agel_config');
-        return saved ? JSON.parse(saved) : DEFAULT_CONFIG;
+        try {
+          const saved = localStorage.getItem('ahwa_agel_config');
+          if (saved) return JSON.parse(saved);
+        } catch (e) {
+          console.error("Config read error", e);
+        }
+        return DEFAULT_CONFIG;
       });
 
+      // Recover from IndexedDB if localStorage was wiped
       useEffect(() => {
-        localStorage.setItem('ahwa_agel_customers', JSON.stringify(customers));
-      }, [customers]);
+        setIsInApp(checkIsInAppBrowser());
+
+        async function restoreFromBackup() {
+          const backupCust = await loadFromIndexedDB('ahwa_agel_customers');
+          if (backupCust && Array.isArray(backupCust) && backupCust.length > 0) {
+            setCustomers(prev => {
+              if (!prev || prev.length === 0 || prev === INITIAL_CUSTOMERS) {
+                try {
+                  localStorage.setItem('ahwa_agel_customers', JSON.stringify(backupCust));
+                } catch(e) {}
+                return backupCust;
+              }
+              return prev;
+            });
+          }
+        }
+        restoreFromBackup();
+      }, []);
+
+      // Centralized Robust Save Function
+      const persistData = (newCust, newConf) => {
+        const custToSave = newCust || customers;
+        const confToSave = newConf || config;
+
+        setSaveStatus("جاري الحفظ...");
+        try {
+          localStorage.setItem('ahwa_agel_customers', JSON.stringify(custToSave));
+          localStorage.setItem('ahwa_agel_config', JSON.stringify(confToSave));
+          saveToIndexedDB('ahwa_agel_customers', custToSave);
+          saveToIndexedDB('ahwa_agel_config', confToSave);
+          setTimeout(() => setSaveStatus("محفوظ ✅"), 400);
+        } catch (e) {
+          console.error("Error saving data:", e);
+          setSaveStatus("خطأ في الحفظ ⚠️");
+        }
+      };
 
       useEffect(() => {
-        localStorage.setItem('ahwa_agel_config', JSON.stringify(config));
-      }, [config]);
+        persistData(customers, config);
+      }, [customers, config]);
 
       // State for New Debt Entry (تسجيل شكك جديد)
       const [selectedCustomerId, setSelectedCustomerId] = useState('');
@@ -268,16 +377,32 @@
 
       return (
         <div className="flex flex-col min-h-screen">
+          {/* تنبيه مهم إذا تم الفتح من داخل تطبيق واتساب أو فيسبوك */}
+          {isInApp && (
+            <div className="bg-amber-500 text-stone-950 font-black text-xs px-4 py-2.5 text-center flex items-center justify-center gap-2 shadow-lg">
+              <span className="text-base">⚠️</span>
+              <span>
+                تنبيه مهم: أنت فاتح الرابط من داخل واتساب المؤقت! اضغط على (الثلاث نقط ⋮ بالأعلى) واختر <strong>"فتح في المتصفح / Open in Chrome"</strong> لضمان بقاء بياناتك محفوظة دائماً.
+              </span>
+            </div>
+          )}
+
           {/* Header */}
           <header className="bg-stone-900 border-b border-stone-800 sticky top-0 z-30 shadow-md">
             <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className="text-3xl p-2 bg-amber-500/10 rounded-2xl border border-amber-500/20">☕</span>
                 <div>
-                  <h1 className="text-lg font-black text-amber-200">
-                    نوتة الشكك والآجل
-                    <span className="text-xs mr-2 font-normal text-stone-400">({config.cafeName})</span>
-                  </h1>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-lg font-black text-amber-200">
+                      نوتة الشكك والآجل
+                      <span className="text-xs mr-2 font-normal text-stone-400">({config.cafeName})</span>
+                    </h1>
+                    <span className="text-[10px] bg-stone-950 px-2 py-0.5 rounded-full border border-stone-800 text-emerald-400 font-bold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      {saveStatus}
+                    </span>
+                  </div>
                   <p className="text-xs text-amber-500 font-bold">
                     إجمالي الفلوس اللي بره في السوق: <span className="text-sm font-black text-amber-400">{totalMarketDebt} جنيه</span>
                   </p>
